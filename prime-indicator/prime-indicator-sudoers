@@ -1,0 +1,1 @@
+%wheel ALL=NOPASSWD: /usr/local/lib/primeindicator/igpuon, /usr/local/lib/primeindicator/dgpuon

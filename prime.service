@@ -1,0 +1,10 @@
+[Unit]
+Description=Enable intel GPU on boot
+Before=sddm.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gpumanager startup
+
+[Install]
+WantedBy=multi-user.target

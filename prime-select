@@ -1,0 +1,72 @@
+#!/bin/bash
+
+function GetAlternative() {
+	if [ "$(ls /var/lib/pacman/local/mesa-libgl* 2> /dev/null)" ]; then
+		echo "intel"
+	elif [ "$(ls /var/lib/pacman/local/nvidia-libgl* 2> /dev/null)" ]; then
+		echo "nvidia"
+	fi
+}
+
+#Install the desired LibGL
+function SetAlternative() {
+	desired=$1
+	currentalternative=$(GetAlternative)
+	if [ "$desired" = "$currentalternative" ]; then
+		echo "LibGL already is $currentalternative, nothing to do"
+	else
+		if [ "$desired" = "nvidia" ]; then
+			pacman --noconfirm -Rdd mesa-libgl lib32-mesa-libgl
+			pacman --noconfirm -S nvidia-libgl lib32-nvidia-libgl
+		elif [ "$desired" = "intel" ]; then
+			pacman --noconfirm -Rdd nvidia-libgl lib32-nvidia-libgl
+			pacman --noconfirm -S mesa-libgl lib32-mesa-libgl
+		fi
+	fi
+}
+
+#Write discrete card desired state in a file to be used later by another script
+function WriteDesiredConfig() {
+	discretestate=$1
+	file="/etc/prime/state"
+	if [ "$discretestate" = "nvidia" ]; then
+		echo "ON" > "$file"
+		cp /etc/prime/xorg.conf /etc/X11/
+		if [ -f /etc/X11/xorg.conf.d/20-intel.conf ]; then
+    		rm /etc/X11/xorg.conf.d/20-intel.conf
+		fi
+		cp /etc/prime/Xsetup /usr/share/sddm/scripts/
+        chmod +x /usr/share/sddm/scripts/Xsetup
+        if ! lsmod | grep "bbswitch" &> /dev/null ; then
+            modprobe bbswitch
+        fi
+        echo "ON" >> /proc/acpi/bbswitch
+	elif [ "$discretestate" = "intel" ]; then
+		echo "OFF" > "$file"
+		cp /etc/prime/20-intel.conf /etc/X11/xorg.conf.d/
+		if [ -f /etc/X11/xorg.conf ]; then
+    		rm /etc/X11/xorg.conf
+		fi
+        cp /etc/prime/Xsetup_intel /usr/share/sddm/scripts/Xsetup
+        chmod +x /usr/share/sddm/scripts/Xsetup
+	fi
+}
+
+argument=$1
+
+#Checks if argument is valid and if not already active will attempt to do so.
+if [ "$argument" = "intel" ] || [ "$argument" = "nvidia" ]; then
+	if [[ $EUID -ne 0 ]]; then
+		echo "This script must be run as root"
+		exit 1
+	fi
+	SetAlternative "$argument"
+	WriteDesiredConfig "$argument"
+else
+	if [ "$argument" = "query" ]; then
+		currentalternative=$(GetAlternative)
+		echo "$currentalternative"
+	else
+		echo "Usage prime.sh intel|nvidia|query"
+	fi
+fi

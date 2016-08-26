@@ -1,0 +1,13 @@
+#!/bin/sh
+# Xsetup - run as root before the login dialog appears
+
+modprobe -r nvidia_uvm
+modprobe -r nvidia_drm
+modprobe -r nvidia_modeset
+modprobe -r nvidia
+
+if ! lsmod | grep "bbswitch" &> /dev/null ; then
+    echo "$(date +%Y-%m-%d:%H:%M:%S) - Loading bbswitch module"
+    modprobe bbswitch
+fi
+    echo "OFF" >> /proc/acpi/bbswitch

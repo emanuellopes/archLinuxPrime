@@ -1,0 +1,146 @@
+#!/bin/bash
+
+function GetAlternative() {
+	if [ "$(ls /var/lib/pacman/local/mesa-libgl* 2> /dev/null)" ]; then
+		echo "intel"
+	elif [ "$(ls /var/lib/pacman/local/nvidia-libgl* 2> /dev/null)" ]; then
+		echo "nvidia"
+	fi
+}
+
+#Install the desired LibGL
+function SetAlternative() {
+	desired=$1
+	echo "$(date +%Y-%m-%d:%H:%M:%S) - Getting current Alternative"
+	currentalternative=$(GetAlternative)
+	if [ "$desired" = "$currentalternative" ]; then
+		echo "$(date +%Y-%m-%d:%H:%M:%S) - LibGL is already $currentalternative nothing to do"
+	else
+		if [ "$desired" = "nvidia" ]; then
+			echo "$(date +%Y-%m-%d:%H:%M:%S) - Setting up desired Alternative"
+			pacman --noconfirm -Rdd mesa-libgl lib32-mesa-libgl
+			pacman --noconfirm -S nvidia-libgl lib32-nvidia-libgl
+		elif [ "$desired" = "intel" ]; then
+			echo "$(date +%Y-%m-%d:%H:%M:%S) - Setting up desired Alternative"
+			pacman --noconfirm -Rdd nvidia-libgl lib32-nvidia-libgl
+			pacman --noconfirm -S mesa-libgl lib32-mesa-libgl
+		fi
+	fi
+}
+
+#Read the desired discrete card state
+function ReadAlternative() {
+	file="/etc/prime/state"
+	cat $file
+}
+
+#Write discrete card desired state, to be used in startup
+function WriteDesiredConfig() {
+	discretestate=$1
+	file="/etc/prime/state"
+	echo "$(date +%Y-%m-%d:%H:%M:%S) - Setting up desired state"
+	if [ "$discretestate" = "nvidia" ]; then
+		echo "ON" > "$file"
+	elif [ "$discretestate" = "intel" ]; then
+		echo "OFF" > "$file"
+	fi
+}
+
+#Clean the config files required by the discrete card
+function CleanConfigs() {
+	echo "$(date +%Y-%m-%d:%H:%M:%S) - Cleaning configs"
+	rm -f /etc/X11/xorg.conf
+	rm -f /etc/X11/xinit/xinitrc.d/nvidia-optimus.sh
+#	rm -f /usr/share/gdm/greeter/autostart/display_setup.desktop
+	rm -f /usr/share/sddm/scripts/Xsetup
+    cp /etc/prime/20-intel.conf /etc/X11/xorg.conf.d/
+}
+
+#Setup the config files required by the discrete card
+function SetupConfigs() {
+	xorg_conf="/etc/prime/xorg.conf"
+	offload="/etc/prime/nvidia-optimus.sh"
+#	offloadgdm="/etc/prime/display_setup.desktop"
+	offloadsddm="/etc/prime/Xsetup"
+	echo "$(date +%Y-%m-%d:%H:%M:%S) - Setting up configs"
+	cat $xorg_conf > /etc/X11/xorg.conf
+#	cat $offloadgdm > /usr/share/gdm/greeter/autostart/display_setup.desktop
+	cat $offloadsddm > /usr/share/sddm/scripts/Xsetup
+	cat $offload > /etc/X11/xinit/xinitrc.d/nvidia-optimus.sh
+	chmod +x /etc/X11/xinit/xinitrc.d/nvidia-optimus.sh
+	chmod +x /usr/share/sddm/scripts/Xsetup
+}
+
+#Load the nvidia module
+function LoadModule() {
+	echo "$(date +%Y-%m-%d:%H:%M:%S) - Loading NVIDIA module"
+	modprobe nvidia
+	modprobe nvidia_uvm
+	modprobe nvidia_drm
+	modprobe nvidia_modeset
+}
+
+#Unload the nvidia module
+function UnloadModule() {
+	echo "$(date +%Y-%m-%d:%H:%M:%S) - Checking if NVIDIA modules are loaded"
+	if lsmod | grep "nvidia" &> /dev/null ; then
+		echo "$(date +%Y-%m-%d:%H:%M:%S) - Unloading NVIDIA modules"
+		modprobe -r nvidia_uvm
+		modprobe -r nvidia_drm
+		modprobe -r nvidia_modeset
+		modprobe -r nvidia
+	fi
+}
+
+#Power the discrete card on or off
+function DesiredCardState() {
+	echo "$(date +%Y-%m-%d:%H:%M:%S) - Checking if bbswitch module is loaded"
+	if ! lsmod | grep "bbswitch" &> /dev/null ; then
+		echo "$(date +%Y-%m-%d:%H:%M:%S) - Loading bbswitch module"
+		modprobe bbswitch
+	fi
+	cardstate=$1
+	echo "$(date +%Y-%m-%d:%H:%M:%S) - Changing bbswitch state to $cardstate"
+	echo "$cardstate" >> /proc/acpi/bbswitch
+}
+
+function Main() {
+	#Always assume that the content of the "state" file is the desired, if the OpenGL settings do not match with that they will be updated. Then load the correct configs
+	#turn on/off the discrete card and load/unload the nvidia driver.
+	echo "$(date +%Y-%m-%d:%H:%M:%S) - Reading desired alternative state"
+	echo "MAin"
+	desiredstate=$(ReadAlternative)
+	echo "$desiredstate"
+
+	if [ "$desiredstate" = "OFF" ]; then
+		SetAlternative "intel"
+		CleanConfigs
+		UnloadModule
+		DesiredCardState "$desiredstate"
+elif [ "$desiredstate" = "ON" ]; then
+		SetAlternative "nvidia"
+		SetupConfigs
+		DesiredCardState "$desiredstate"
+		LoadModule
+	fi
+}
+
+#Log Stuff (Close stdout file descriptor, close stderr file descriptor, opens stdout as logfile and redirects stderr to stdout)
+LogFile="/var/log/prime"
+exec 1<&-
+exec 2<&-
+exec 1<>$LogFile
+exec 2>&1
+
+#Switch to intel on startup (called by systemd service file), if no parameter specified execute the main script function
+if [ "$1" != "startup" ]; then
+	echo "main no startup"
+	Main
+else
+	echo "intel again!!"
+	WriteDesiredConfig "intel"
+	SetAlternative "intel"
+	CleanConfigs
+	UnloadModule
+	DesiredCardState "OFF"
+fi
